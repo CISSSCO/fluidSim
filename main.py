@@ -7,6 +7,9 @@ Original file is located at
     https://colab.research.google.com/drive/1aODR4XYywZ8WR8wyKvusrIQ805vBns0B
 """
 
+import pycuda.driver as cuda
+import pycuda.autoinit
+from pycuda.compiler import SourceModule
 import numpy as np
 import matplotlib.pyplot as plt
 from time import time as ti
