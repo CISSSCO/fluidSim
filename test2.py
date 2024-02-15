@@ -1,18 +1,13 @@
 
-#import pycuda.driver as cuda
-#import pycuda.autoinit
-#from pycuda.compiler import SourceModule
-import math
+import pycuda.driver as cuda
+import pycuda.autoinit
+from pycuda.compiler import SourceModule
 import numpy as np
 import matplotlib.pyplot as plt
 from time import time as ti
 from matplotlib import cm
 from tqdm import tqdm
-import numba as nb
-from numba import cuda
-import cupy as cp
 
-@cuda.jit(device=True)
 def macroscopic(fin, nx, ny, v):
     rho = np.sum(fin,axis=0)
     u = np.zeros((2,nx,ny))
@@ -22,7 +17,6 @@ def macroscopic(fin, nx, ny, v):
     u /= rho
     return rho, u
 
-@cuda.jit(device=True)
 def equilibrium(rho, u, v, t, nx, ny):
     usqr = (3/2)*(u[0]**2+u[1]**2)
     feq = np.zeros((9,nx,ny))
@@ -43,7 +37,7 @@ def inivel( uLB, ly):
 
 Re = 10.0                  # Reynolds number
 #------------------------------------------------------------------------------
-maxIter = 10000
+maxIter = 70000
 nx,ny = 420,180             # Domain dimensions
 ly = ny-1
 uLB = 0.04                  # Inlet velocity NON PHYSICAL??
@@ -89,61 +83,52 @@ if True:
 # initial velocity profile
 vel = np.fromfunction(inivel(uLB,ly),(2,nx,ny))
 
+# initialize fin to equilibirum (rho = 1)
+fin = equilibrium(1,vel,v,t,nx,ny)
 
 #==============================================================================
 #   Time-Stepping
 #==============================================================================
-@cuda.jit
-def main():
-    time = cuda.grid(1)
-# initialize fin to equilibirum (rho = 1)
-    fin = equilibrium(1,vel,v,t,nx,ny)
-
-    if time < (range(maxIter)):
-        # outflow boundary condition (right side) NEUMANN BC! No gradient
-        fin[col_2,-1,:] = fin[col_2,-2,:]
-
-        # compute macroscopic variables
-        rho,u = macroscopic(fin,nx,ny,v)
-
-        # inlet boundary condition (left wall)
-        u[:,0,:] = vel[:,0,:]
-        rho[0,:] = 1/(1-u[0,0,:])*( np.sum(fin[col_1,0,:], axis = 0)+
-                                    2*np.sum(fin[col_2,0,:], axis = 0))
-
-        feq = equilibrium(rho,u,v,t,nx,ny)
-        fin[col_0,0,:] = feq[col_0,0,:] + fin[col_2,0,:]-feq[col_2,0,:]
-
-        # Collide
-        fout = fin - omega*(fin-feq)
-
-        # bounceback
-        for i in range(9):
-            fout[i,obstacle] = fin[8-i,obstacle]
-
-        # stream
-        for i in range(9):
-            # be careful with this -> numpy.roll cycles through an array by an axis
-            # and the last element becomes the first. this implements a periodic
-            # boundary in a very compact syntax, but needs to be reworked for other
-            # implementations
-            fin[i,:,:] = np.roll(
-                              np.roll(
-                                    fout[i,:,:], v[i,0], axis = 0
-                                   ),
-                              v[i,1], axis = 1
-                              )
-
-        # Output an image every 100 iterations
-        if (time%100 == 0):
-            plt.clf()
-            plt.imshow(np.sqrt(u[0]**2+u[1]**2).T, cmap = cm.coolwarm)
-            plt.savefig("vel{0:03d}.png".format(time//100))
-tpb = 256
-blockpergrid_x = int(math.ceil(maxIter / tpb))
-blockpergrid_y = int(1)
-blockpergrid = (blockpergrid_x, blockpergrid_y)
 t0 = ti()
-main[blockpergrid, tpb]()
+for time in tqdm(range(maxIter)):
+    # outflow boundary condition (right side) NEUMANN BC! No gradient
+    fin[col_2,-1,:] = fin[col_2,-2,:]
+
+    # compute macroscopic variables
+    rho,u = macroscopic(fin,nx,ny,v)
+
+    # inlet boundary condition (left wall)
+    u[:,0,:] = vel[:,0,:]
+    rho[0,:] = 1/(1-u[0,0,:])*( np.sum(fin[col_1,0,:], axis = 0)+
+                                2*np.sum(fin[col_2,0,:], axis = 0))
+
+    feq = equilibrium(rho,u,v,t,nx,ny)
+    fin[col_0,0,:] = feq[col_0,0,:] + fin[col_2,0,:]-feq[col_2,0,:]
+
+    # Collide
+    fout = fin - omega*(fin-feq)
+
+    # bounceback
+    for i in range(9):
+        fout[i,obstacle] = fin[8-i,obstacle]
+
+    # stream
+    for i in range(9):
+        # be careful with this -> numpy.roll cycles through an array by an axis
+        # and the last element becomes the first. this implements a periodic
+        # boundary in a very compact syntax, but needs to be reworked for other
+        # implementations
+        fin[i,:,:] = np.roll(
+                          np.roll(
+                                fout[i,:,:], v[i,0], axis = 0
+                               ),
+                          v[i,1], axis = 1
+                          )
+
+    # Output an image every 100 iterations
+    if (time%100 == 0):
+        plt.clf()
+        plt.imshow(np.sqrt(u[0]**2+u[1]**2).T, cmap = cm.coolwarm)
+        plt.savefig("vel{0:03d}.png".format(time//100))
 tf = ti() - t0
 print("time to execute = ",tf)
