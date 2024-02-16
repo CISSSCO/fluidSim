@@ -1,3 +1,4 @@
 report*.nsys-rep
 *.nsys-rep
 *.sqlite
+.ipynb_checkpoints*.ipynb
