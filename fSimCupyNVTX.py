@@ -250,7 +250,6 @@ for time in tqdm(range(maxIter)):
         # x_temp = int(round(5 * nx / ny))
         # y_temp = int(round(5))
         plt.imshow(np.sqrt(u_temp[0]**2+u_temp[1]**2).T, cmap= 'jet')
-        plt.colorbar()
         plt.title(f"Velocity Magnitude at Iteration {time}")
         plt.xlabel("X")
         plt.ylabel("Y")

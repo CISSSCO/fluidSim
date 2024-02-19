@@ -9,6 +9,19 @@ from numba import cuda
 import cupy as cp
 import numba as nb
 
+try:
+    from cupy.cuda.nvtx import RangePush as nvtxRangePush
+    from cupy.cuda.nvtx import RangePop  as nvtxRangePop
+except:
+    pass
+
+try:
+    from nvtx import range_push as nvtxRangePush
+    from nvtx import range_pop  as nvtxRangePop
+except:
+    pass
+
+nvtxRangePush("macroscopic function")
 @cuda.jit
 def macroscopic(rho, u, fin, nx, ny, v):
     i, j = cuda.grid(2)
@@ -23,7 +36,9 @@ def macroscopic(rho, u, fin, nx, ny, v):
             u[i, j, 1] += fin[k, i, j] * v[k, 1]
         u[i, j, 0] /= rho[i, j]
         u[i, j, 1] /= rho[i, j]
+nvtxRangePop()
 
+nvtxRangePush("equilibrium function")
 @cuda.jit
 def equilibrium(feq, rho, u, v, t):
     nx, ny, _ = u.shape
@@ -34,12 +49,16 @@ def equilibrium(feq, rho, u, v, t):
         for k in range(9):
             cu = 3*(v[k, 0]*u[i, j, 0] + v[k, 1]*u[i, j, 1])
             feq[k, i, j] = rho*t[k]*(1 + cu + 0.5*cu**2 - usqr)
+nvtxRangePop()
 
+nvtxRangePush("obstacle function")
 def obstacle_fun(cx, cy, r):
     def inner(x, y):
         return (x-cx)**2+(y-cy)**2<r**2
     return inner
+nvtxRangePop()
 
+nvtxRangePush("inivel function")
 def inivel(uLB, ly, d, nx, ny):
     yy = cp.linspace(0, ny - 1, ny).repeat(nx).reshape((ny, nx))
     yy = yy.T
@@ -47,10 +66,14 @@ def inivel(uLB, ly, d, nx, ny):
     for dir in range(d):
         vel[dir,:,:] = (1-dir) * uLB * (1 + 1e-4 * cp.sin(yy / ly * 2 * cp.pi))
     return vel
+nvtxRangePop()
 
+nvtxRangePush("compute_rho function")
 def compute_rho(fin_col_1, fin_col_2, u_0):
     return 1 / (1 - u_0) * (cp.sum(fin_col_1, axis=0) + 2 * cp.sum(fin_col_2, axis=0))
+nvtxRangePop()
 
+nvtxRangePush("time_stepping function")
 def time_stepping(feq, maxIter, nx, ny, obstacle, vel, v, t, omega):
     t0 = ti()
     for time in tqdm(range(maxIter)):
@@ -82,14 +105,15 @@ def time_stepping(feq, maxIter, nx, ny, obstacle, vel, v, t, omega):
             plt.clf()
             u_temp = u.get()
             plt.imshow(np.sqrt(u_temp[0]**2 + u_temp[1]**2).T, cmap='Reds')
-            plt.savefig(f"./testFolder/vel{time//100:03d}.png")
+            plt.savefig(f"./numbaTest/vel{time//100:03d}.png")
 
     tf = ti() - t0
     print("Time to execute:", tf)
+nvtxRangePop()
 
-Re = 50.0
-maxIter = 70000
-nx, ny = 720, 380
+Re = 170.0
+maxIter = 50000
+nx, ny = 680, 240
 ly = ny-1
 uLB = 0.04
 cx, cy, r = nx//4, ny//2, ny/9
