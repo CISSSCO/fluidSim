@@ -3,3 +3,4 @@ report*.nsys-rep
 *.sqlite
 .ipynb_checkpoints
 *.png
+*.qdstrm
