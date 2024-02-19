@@ -1,21 +1,30 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[35]:
+# In[ ]:
+
+
+
+
+
+# In[1]:
 
 
 import numpy as np
 import matplotlib.pyplot as plt
 from time import time as ti
+from matplotlib import cm
 from tqdm import tqdm
+from numba import cuda
+import cupy as cp
 
-# for pytorch
-from torch import zeros, tensor, roll, sin, sqrt, linspace
-from torch import sum as tsum
-import torch
+# # for pytorch
+# from torch import zeros, cp.array, roll, sin, sqrt, linspace
+# from torch import sum as tsum
+# import torch
 
 
-# In[36]:
+# In[ ]:
 
 
 try:
@@ -34,47 +43,33 @@ except:
 # from cupy.cuda.nvtx import RangePop  as nvtxRangePop
 
 
-# In[37]:
+# In[2]:
 
 
-#-----------------------------------------------------
-# Code for profiling cuda version
-#-----------------------------------------------------
-# def nvtxRangePush(*arg):
-#     pass
-# def nvtxRangePop(*arg):
-#     pass
+# print("Torch version:",torch.__version__)
+
+# torch.cuda.get_device_name(0)
 
 
-# In[38]:
-
-
-print("Torch version:",torch.__version__)
-
-torch.cuda.get_device_name(0)
-
-
-# In[39]:
-
-
-# ! nvcc --version
-
-
-# In[40]:
+# In[3]:
 
 
 # selecting device as cuda if available otherwise will set to cpu
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(device)
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# print(device)
 
 
-# In[41]:
+# In[4]:
 
 
+# @cuda.jit
 nvtxRangePush("macroscopic function")
 def macroscopic(fin, nx, ny, v):
-    rho = tsum(fin,axis=0).to(device)   # sending data to device
-    u = zeros((2,nx,ny)).to(device) # sending data to device
+    rho = cp.sum(fin,axis=0)    # sending data to device
+    # rho_gpu = cuda.to_device(rho)
+    u = cp.zeros((2,nx,ny))  # sending data to device
+    # u_gpu = cuda.to_device(u)
+    # i = cuda.grid(1)
     for i in range(9):
         u[0,:,:] += v[i,0]*fin[i,:,:]
         u[1,:,:] += v[i,1]*fin[i,:,:]
@@ -83,7 +78,23 @@ def macroscopic(fin, nx, ny, v):
 nvtxRangePop()
 
 
-# In[42]:
+# In[5]:
+
+
+# @cuda.jit
+nvtxRangePush("equilibrium function")
+def equilibrium(rho, u, v, t, nx, ny):
+    usqr = (3/2)*(u[0]**2+u[1]**2)
+    feq = cp.zeros((9,nx,ny))
+    # i = cuda.grid(1)
+    for i in range(9):
+        cu = 3*(v[i,0]*u[0,:,:] + v[i,1]*u[1,:,:])
+        feq[i,:,:] = rho*t[i]*(1+cu+0.5*cu**2-usqr)
+    return feq
+nvtxRangePop()
+
+
+# In[6]:
 
 
 nvtxRangePush("obstacle function")
@@ -94,35 +105,28 @@ def obstacle_fun(cx, cy, r):
 nvtxRangePop()
 
 
-# In[43]:
-
-
-nvtxRangePush("equilibrium function")
-def equilibrium(rho, u, v, t, nx, ny):
-    usqr = (3/2)*(u[0]**2+u[1]**2)
-    feq = zeros((9,nx,ny))
-    for i in range(9):
-        cu = 3*(v[i,0]*u[0,:,:] + v[i,1]*u[1,:,:])
-        feq[i,:,:] = rho*t[i]*(1+cu+0.5*cu**2-usqr)
-    return feq.to(device)
-nvtxRangePop()
-
-
-# In[44]:
+# In[7]:
 
 
 nvtxRangePush("inivel function")
 def inivel(uLB, ly, d, nx, ny):
-    _,yy = torch.meshgrid(linspace(0, nx - 1, nx), linspace(0, ny - 1, ny))
-    yy.to(device)
-    vel = zeros((d, nx, ny)).to(device)
+    _,yy = cp.meshgrid(cp.linspace(0, nx - 1, nx), cp.linspace(0, ny - 1, ny))
+    yy = yy.T
+    # yy.to(device)
+    # vel = zeros((d, nx, ny)).to(device)
+    vel = cp.zeros((d, nx, ny))
     for dir in range(d):
-        vel[dir,:,:] = (1-dir) * uLB * (1+1e-4*sin(yy/ly*2*np.pi))
+        vel[dir,:,:] = (1-dir) * uLB * (1+1e-4*cp.sin(yy/ly*2*cp.pi))
     return vel
 nvtxRangePop()
+# def inivel( uLB, ly):
+#     def inner(d,x,y):
+#         return (1-d) * uLB * (1+1e-4*cp.sin(y/ly*2*np.pi))
+#     return inner
+    
 
 
-# In[45]:
+# In[8]:
 
 
 Re = 170.0                  # Reynolds number
@@ -136,11 +140,11 @@ nulb = uLB*r/Re             # Viscosity
 omega = 1 / (3*nulb+0.5)    # Relaxation parameter
 
 
-# In[46]:
+# In[9]:
 
 
 # lattice velocities
-v = tensor([
+v = cp.array([
             [1,1],
             [1,0],
             [1,-1],
@@ -150,10 +154,10 @@ v = tensor([
             [-1,1],
             [-1,0],
             [-1,-1]
-            ]).int().to(device)
+            ])
 
 # weights
-t = tensor([
+t = cp.array([
             1/36,
             1/9,
             1/36,
@@ -163,35 +167,41 @@ t = tensor([
             1/36,
             1/9,
             1/36
-            ]).float().to(device)
+            ])
 
 
-# In[47]:
+# In[10]:
 
 
-col_0 = tensor([0,1,2]).long().to(device)
-col_1 = tensor([3,4,5]).long().to(device)
-col_2 = tensor([6,7,8]).long().to(device)
+col_0 = cp.array([0,1,2])
+col_1 = cp.array([3,4,5])
+col_2 = cp.array([6,7,8])
 
 
 
-# In[48]:
+# In[11]:
 
 
-obstacle = torch.tensor(np.fromfunction(obstacle_fun(cx,cy,r),(nx, ny)))
+# kwargs['shape'] = [nx, ny]
+# instantiate the cylindrical obstacle
+obstacle = cp.array(cp.fromfunction(obstacle_fun(cx,cy,r),(nx, ny)))
+ob = obstacle.get()
 if True:
-  plt.imshow(obstacle)
+  plt.imshow(ob)
 
 
-# In[49]:
+# In[12]:
 
 
 # initial velocity profile
-#vel = np.fromfunction(inivel(uLB,ly),(2,nx,ny))
+# vel = cp.fromfunction(inivel(uLB,ly),(2,nx,ny))
 vel = inivel(uLB, ly, 2, nx, ny)
-
+# tpb = 16
+# size = 10000
+# block = (size // tpb)
 # initialize fin to equilibirum (rho = 1)
-fin = equilibrium(1,vel,v,t,nx,ny).to(device)
+# fin = equilibrium[block, tpb](1,vel,v,t,nx,ny)
+fin = equilibrium(1,vel,v,t,nx,ny)
 
 #==============================================================================
 #   Time-Stepping
@@ -200,14 +210,15 @@ t0 = ti()
 for time in tqdm(range(maxIter)):
     # outflow boundary condition (right side) NEUMANN BC! No gradient
     fin[col_2,-1,:] = fin[col_2,-2,:]
-
     # compute macroscopic variables
+    
+    # rho,u = macroscopic[block, tpb](fin,nx,ny,v)
     rho,u = macroscopic(fin,nx,ny,v)
 
     # inlet boundary condition (left wall)
     u[:,0,:] = vel[:,0,:]
-    rho[0,:] = 1/(1-u[0,0,:])*( tsum(fin[col_1,0,:], axis = 0)+
-                                2*tsum(fin[col_2,0,:], axis = 0))
+    rho[0,:] = 1/(1-u[0,0,:])*( cp.sum(fin[col_1,0,:], axis = 0)+
+                                2*cp.sum(fin[col_2,0,:], axis = 0))
 
     feq = equilibrium(rho,u,v,t,nx,ny)
     fin[col_0,0,:] = feq[col_0,0,:] + fin[col_2,0,:]-feq[col_2,0,:]
@@ -225,28 +236,34 @@ for time in tqdm(range(maxIter)):
         # and the last element becomes the first. this implements a periodic
         # boundary in a very compact syntax, but needs to be reworked for other
         # implementations
-        fin[i,:,:] = roll(
-                          roll(
-                                fout[i,:,:], v[i,0].item(), dims = 0
+        fin[i,:,:] = cp.roll(
+                          cp.roll(
+                                fout[i,:,:], v[i,0], axis = 0
                                ),
-                          v[i,1].item(), dims = 1
+                          v[i,1], axis = 1
                           )
 
     # Output an image every 100 iterations
     if (time%100 == 0):
         plt.clf()
-        u_temp = u.cpu()
+        u_temp = u.get()
         # x_temp = int(round(5 * nx / ny))
         # y_temp = int(round(5))
+        plt.imshow(np.sqrt(u_temp[0]**2+u_temp[1]**2).T, cmap= 'jet')
+        plt.colorbar()
         plt.title(f"Velocity Magnitude at Iteration {time}")
-        # plt.colorbar()
         plt.xlabel("X")
         plt.ylabel("Y")
-        plt.imshow(sqrt(u_temp[0]**2+u_temp[1]**2).T, cmap= 'jet')
-        plt.savefig("./pytorchTest/vel{0:03d}.png".format(time//100))
+        plt.savefig("./cupyTest/vel{0:03d}.png".format(time//100))
 tf = ti() - t0
 
 print("time to execute = ",tf)
+
+
+# In[ ]:
+
+
+
 
 
 # In[ ]:
