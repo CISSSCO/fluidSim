@@ -1,14 +1,23 @@
 
-
-import pycuda.driver as cuda
-import pycuda.autoinit
-from pycuda.compiler import SourceModule
 import numpy as np
 import matplotlib.pyplot as plt
 from time import time as ti
 from matplotlib import cm
 from tqdm import tqdm
 
+try:
+    from cupy.cuda.nvtx import RangePush as nvtxRangePush
+    from cupy.cuda.nvtx import RangePop  as nvtxRangePop
+except:
+    pass
+
+try:
+    from nvtx import range_push as nvtxRangePush
+    from nvtx import range_pop  as nvtxRangePop
+except:
+    pass
+
+nvtxRangePush("macroscopic function")
 def macroscopic(fin, nx, ny, v):
     rho = np.sum(fin,axis=0)
     u = np.zeros((2,nx,ny))
@@ -17,7 +26,9 @@ def macroscopic(fin, nx, ny, v):
         u[1,:,:] += v[i,1]*fin[i,:,:]
     u /= rho
     return rho, u
+nvtxRangePop()
 
+nvtxRangePush("equilibrium function")
 def equilibrium(rho, u, v, t, nx, ny):
     usqr = (3/2)*(u[0]**2+u[1]**2)
     feq = np.zeros((9,nx,ny))
@@ -25,21 +36,26 @@ def equilibrium(rho, u, v, t, nx, ny):
         cu = 3*(v[i,0]*u[0,:,:] + v[i,1]*u[1,:,:])
         feq[i,:,:] = rho*t[i]*(1+cu+0.5*cu**2-usqr)
     return feq
+nvtxRangePop()
 
+nvtxRangePush("obstacle function")
 def obstacle_fun(cx, cy, r):
     def inner(x, y):
         return (x-cx)**2+(y-cy)**2<r**2
     return inner
+nvtxRangePop()
 
+nvtxRangePush("inivel function")
 def inivel( uLB, ly):
     def inner(d,x,y):
         return (1-d) * uLB * (1+1e-4*np.sin(y/ly*2*np.pi))
     return inner
+nvtxRangePop()
 
-Re = 10.0                  # Reynolds number
+Re = 170.0                  # Reynolds number
 #------------------------------------------------------------------------------
-maxIter = 70000
-nx,ny = 420,180             # Domain dimensions
+maxIter = 50000
+nx,ny = 680,240             # Domain dimensions
 ly = ny-1
 uLB = 0.04                  # Inlet velocity NON PHYSICAL??
 cx,cy,r = nx//4,ny//2,ny/9  # cylinder coordinates and radius (as integers)
@@ -129,7 +145,7 @@ for time in tqdm(range(maxIter)):
     # Output an image every 100 iterations
     if (time%100 == 0):
         plt.clf()
-        plt.imshow(np.sqrt(u[0]**2+u[1]**2).T, cmap = cm.coolwarm)
-        plt.savefig("vel{0:03d}.png".format(time//100))
+        plt.imshow(np.sqrt(u[0]**2+u[1]**2).T, cmap = "jet")
+        plt.savefig("serialTest3/vel{0:03d}.png".format(time//100))
 tf = ti() - t0
 print("time to execute = ",tf)
